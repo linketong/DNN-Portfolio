@@ -64,46 +64,6 @@ class Merged(Model):
                     bias_regularizer=regularizers.l1(bias_reg),
                 ),
                 tf.keras.layers.Dropout(0.2),
-                # tf.keras.layers.Dense(
-                #     n_nodes,
-                #     activation=tf.nn.elu,
-                #     # kernel_initializer='zero', bias_initializer='zero',
-                #     kernel_regularizer=regularizers.l1(kernel_reg),
-                #     bias_regularizer=regularizers.l1(bias_reg),
-                # ),
-                # tf.keras.layers.Dropout(0.2),
-                # tf.keras.layers.Dense(
-                #     n_nodes,
-                #     activation=tf.nn.elu,
-                #     # kernel_initializer='zero', bias_initializer='zero',
-                #     kernel_regularizer=regularizers.l1(kernel_reg),
-                #     bias_regularizer=regularizers.l1(bias_reg),
-                # ),
-                # tf.keras.layers.Dropout(0.2),
-                # tf.keras.layers.Dense(
-                #     n_nodes,
-                #     activation=tf.nn.elu,
-                #     # kernel_initializer='zero', bias_initializer='zero',
-                #     kernel_regularizer=regularizers.l1(kernel_reg),
-                #     bias_regularizer=regularizers.l1(bias_reg),
-                # ),
-                # tf.keras.layers.Dropout(0.2),
-                # tf.keras.layers.Dense(
-                #     n_nodes,
-                #     activation=tf.nn.elu,
-                #     # kernel_initializer='zero', bias_initializer='zero',
-                #     kernel_regularizer=regularizers.l1(kernel_reg),
-                #     bias_regularizer=regularizers.l1(bias_reg),
-                # ),
-                # tf.keras.layers.Dropout(0.2),
-                # tf.keras.layers.Dense(
-                #     n_nodes,
-                #     activation=tf.nn.elu,
-                #     # kernel_initializer='zero', bias_initializer='zero',
-                #     kernel_regularizer=regularizers.l1(kernel_reg),
-                #     bias_regularizer=regularizers.l1(bias_reg),
-                # ),
-                # tf.keras.layers.Dropout(0.2),
                 tf.keras.layers.Dense(
                     self.dimz,
                     # kernel_initializer='zero', bias_initializer='zero',
@@ -112,34 +72,9 @@ class Merged(Model):
                 ),
             ]
         )
-        # self.nn_z = tf.keras.Sequential(
-        #     [tf.keras.layers.BatchNormalization(input_shape=(n_inputs,))]
-        #     + [
-        #         tf.keras.layers.Dense(
-        #             n_nodes,
-        #             activation=tf.nn.elu,
-        #             # kernel_initializer='zero', bias_initializer='zero',
-        #             kernel_regularizer=regularizers.l1(kernel_reg),
-        #             bias_regularizer=regularizers.l1(bias_reg),
-        #         )
-        #     ]
-        #     * 6
-        #     + [
-        #         tf.keras.layers.Dense(
-        #             self.dimz,
-        #             # kernel_initializer='zero', bias_initializer='zero',
-        #             kernel_regularizer=regularizers.l1(kernel_reg),
-        #             bias_regularizer=regularizers.l1(bias_reg),
-        #         )
-        #     ]
-        # )
+
         self.hist = {"x": [], "y": [], "z": [], "t": []}
 
-    @tf.function
-    def call_graph(self, inputs, test=False):
-        return self.call(inputs)
-
-    # @tf.function
     def call(self, inputs, test=False, record=False, record_tb=False, log_dir="./logs/"):
         """
         :param inputs: [batch_size, dimx]
@@ -171,11 +106,6 @@ class Merged(Model):
             self.hist["y"].append(tf.reduce_mean(y, keepdims=False))  # y[0]
             self.hist["z"].append(tf.reduce_mean(z0, axis=0, keepdims=False))
             self.hist["t"].append(current_time[0][0])
-        # y[1] is always using z @ dw
-        # if self.separate_z0:
-        #     y, pi = self.bsde.next_y(current_time, x, y, z0, dw, self.lb, self.ub, zdx=self.zdx)  # y[1] pi[0]
-        # else:
-        #     y, pi = self.bsde.next_y(current_time, x, y, z0, dw, self.lb, self.ub, zdx=self.zdx)
         y, pi = self.bsde.next_y(current_time, x, y, z0, dw, self.lb, self.ub, zdx=self.zdx)
         if record_tb:
             writer = tf.summary.create_file_writer(log_dir + "/tensorboard")
@@ -185,15 +115,9 @@ class Merged(Model):
 
         """Iterate forward"""
         for t in range(1, self.num_time_interval):
-            # x, y, z, dw, pi = self.loop_body(t, x, y, dw, dw_sample, batch_size)
-            # time = tf.cast(t, TF_DTYPE)
-            # current_time = tf.broadcast_to(time * self.delta_t, [batch_size, 1]) # current_t = 0
-
             time = tf.broadcast_to(tf.cast(t, TF_DTYPE) * self.delta_t, [batch_size, 1])
             x = self.bsde.next_x(x, dw)  # x[1]
-            # pdb.set_trace()
             features = tf.concat([x, time, y], axis=1)
-            # features = tf.concat([x, time], axis=1)
             z = self.nn_z(features) / self.dimz  # z[1]
 
             if record_tb:
@@ -201,7 +125,6 @@ class Merged(Model):
                     tf.summary.scalar("y", data=tf.squeeze(tf.reduce_mean(y, axis=0)), step=t)
 
             dw = dw_sample[:, :, t]  # [M, dimw] dw[1] adapted to t=2
-            # Starting from y[2], could use z @ dx or z @ dw based on indicator zdx
             y, pi = self.bsde.next_y(
                 time, x, y, z, dw, self.lb, self.ub, self.zdx
             )  # y[2] <- t1, x[1], y[1], z[1], dw[1]
@@ -215,21 +138,6 @@ class Merged(Model):
         if record_tb:
             writer.flush()
         return y, x, z
-
-    # @tf.function
-    # def loop_body(self, t, x, y, dw, dw_sample, batch_size):
-    #     time = tf.cast(t, TF_DTYPE)
-    #     next_time = tf.broadcast_to((time + 1) * self.delta_t, [batch_size, 1])
-    #     x = self.bsde.next_x(x, dw)  # x[1]
-    #     features = tf.concat([x, next_time, y], axis=1)
-    #     z = self.nn_z(features) / self.dimz  # z[1]
-    #     dw = dw_sample[:, :, t + 1]  # [M, dimw] dw[1] adapted to t=2
-    #     # Starting from y[2], could use z @ dx or z @ dw based on indicator zdx
-    #     y, pi = self.bsde.next_y(
-    #         next_time, x, y, z, dw, self.lb, self.ub, self.zdx
-    #     )  # y[2] <- t+1, x[1], y[1], z[1], dw[1]
-
-    #     return x, y, z, dw, pi
 
     @tf.function(experimental_compile=False)
     def train_step(self, train_ds):
@@ -248,7 +156,6 @@ class Merged(Model):
         pred_value, _, _ = self.call(test_ds, test=True)
         true_value = self.bsde.g_tf(0, pred_value)
         loss = tf.keras.losses.mean_squared_error(true_value, pred_value)
-        # LAMBDA*tf.keras.losses.mean_squared_error(self.z0, tf.zeros(shape=[1, self.dimz]))
         self.test_loss.update_state(loss)
 
     # @tf.function
@@ -294,8 +201,6 @@ class Merged(Model):
                     z0 = tf.squeeze(tf.matmul(tf.expand_dims(self.z0, 0), sigma_x))
             else:
                 z0 = tf.squeeze(self.z0)
-            # template = 'Epoch {},Elapsed Time: {}, y0: {:.4g}, z0: {:.4g}, Test Loss: {}, lr: {} '
-            # print(template.format(epoch+1, elapsed_time, self.y0.numpy(), z0.numpy(), test_loss, self.lr))
             tf.print(
                 "Epoch:",
                 epoch + 1,

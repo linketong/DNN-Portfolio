@@ -5,21 +5,14 @@ import numpy as np
 
 import tensorflow as tf
 
-# import matlab.engine
 from scipy.integrate import quad
 from scipy.stats import multivariate_normal as normal
 from sklearn.model_selection import train_test_split
 
-# from lambda_model import LambdaSolver
-# import cvxpy as cp
-# from cvxpylayers.tensorflow import CvxpyLayer
 
 TF_DTYPE = tf.float32
 MAX = float("Inf")
 MIN = 0.0
-
-
-# eng = matlab.engine.start_matlab()
 
 
 class Equation(object):
@@ -29,11 +22,8 @@ class Equation(object):
         self.dim = config.dim
         self.total_time = config.total_time
         self.num_time_interval = config.num_time_interval
-        # self.steps_in_year = 40
-        # self.num_time_interval = self.total_time * self.steps_in_year + 1
         self.delta_t = (self.total_time + 0.0) / self.num_time_interval
         self.sqrt_delta_t = np.sqrt(self.delta_t)
-        # self.x0 = config.x_init
 
     def sample(self, num_sample):
         """Sample forward SDE."""
@@ -87,7 +77,6 @@ class Heston_np(object):
 
     def sample(self, num_sample, seed=1):
         # dw_sample and x_sample are both [M,dim,N]
-        # eng.rng(2018)
         np.random.seed(seed)
         dw_sample = np.asarray(
             normal.rvs(size=[int(num_sample / 2), self.dim, self.num_time_interval]) * self.sqrt_delta_t
@@ -104,21 +93,12 @@ class Heston_np(object):
             X = x_sample[:, :, i]
             sigmax[:, :, :, i] = np.expand_dims(self.beta_bar * np.sqrt(X), axis=-1)  # M x 1 x 1 x N
             Z = dw_sample[:, :, i]
-            # x_sample[:, :, i + 1] = self.euler(x_sample[:, :, i], dw_sample[:, :, i], new_kappa, new_theta)
             x_new = X + new_kappa * (new_theta - X) * self.delta_t + sigmax[:, :, 0, i] * Z
             x_new = tf.minimum(x_new, MAX)
             x_new = tf.maximum(x_new, 0.0)
             x_sample[:, :, i + 1] = x_new
         return dw_sample, x_sample, sigmax
 
-    # def ijk(self, X, Z, kappa, theta):
-    #     return (X + kappa * theta * self.delta_t + self.beta_bar * np.sqrt(X) * Z \
-    #             + 0.25 * self.beta_bar**2 * (Z**2 - self.delta_t)) \
-    #            / (1 + kappa * self.delta_t)
-    #
-    # def _euler(self, X, Z, kappa, theta):
-    #     return X + kappa * (theta - X) * self.delta_t + self.beta_bar * np.sqrt(X) * Z
-    #
     def next_x(self, x, dw):
         new_kappa = -(-self.kappa + ((1 - self.gamma) / self.gamma) * self.beta_bar * self.mu_bar * self.rho)
         new_theta = self.var_theta / new_kappa
@@ -140,7 +120,6 @@ class Heston_np(object):
             f = -self.r_tilde(x) * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(
                 tf.maximum(y, 1e-8), self.q_tilde
             )
-            # - ((1 - self.gamma) * self.k * self.rho**2 / self.gamma + self.k - 1) * z**2 / (2 * y)
         return f
 
     def f(self, x, y, z, lb, ub):
@@ -197,7 +176,6 @@ class Heston_np(object):
             - 0.5 * ((kappa_hat + a) * s - (kappa_hat - a) * t)
         ) / (kappa_hat ** 2 - a ** 2) + (((1 - gamma) * r - delta * theta) / k) * (s - t)
         b_exact = 2 * b * (np.exp(a * (s - t)) - 1) / (np.exp(a * (s - t)) * (kappa_hat + a) - kappa_hat + a)
-        # integrand = np.exp(a_exact - b_exact * y)
         return a_exact, b_exact
 
     def h_exact(self, x, t, T):
@@ -215,10 +193,7 @@ class Heston_np(object):
 
 class Heston_exp(Equation):
     def __init__(self, config):
-        # use 'super()' to refer to the base class 'Equation'
-        # here is to use the base class __init__method to initiate the attributes
         super(Heston_exp, self).__init__(config)
-        # self.x_init = np.ones(self.dim) * 0.15 ** 2
         self.x_init = config.x_init
         self.delta = 0.05
         self.r = 0.05
@@ -243,7 +218,6 @@ class Heston_exp(Equation):
     def next_x(self, x, dw):
         new_kappa = -(-self.kappa + ((1 - self.gamma) / self.gamma) * self.beta_bar * self.mu_bar * self.rho)
         new_theta = self.var_theta / new_kappa
-        # pdb.set_trace()
         sigmax = self.sigma_x(x)
         dw = tf.expand_dims(dw, axis=2)
         x_new = x + new_kappa * (new_theta - x) * self.delta_t + tf.squeeze(tf.matmul(sigmax, dw), axis=2)
@@ -252,7 +226,6 @@ class Heston_exp(Equation):
         return x_new
 
     def sigma_x(self, x):
-        # x = tf.maximum(x, MIN)
         return tf.expand_dims(self.beta_bar * tf.sqrt(x), axis=1)
 
     @tf.function
@@ -274,7 +247,6 @@ class Heston_exp(Equation):
                 + tf.reduce_sum(tf.multiply(z, dw), 1, keepdims=True)
             )
         pi = pi_sigma / vol
-        # pdb.set_trace()
         return y_new, pi
 
     def f_u(self, x, y, z):
@@ -300,8 +272,6 @@ class Heston_exp(Equation):
         z = tf.maximum(z, -2.0)
         y = tf.minimum(y, 5.0)
         y = tf.maximum(y, -5.0)
-        # optimal_pi_sigma = (mpr + self.rho * z) / self.gamma
-
         f = (
             self.r_tilde(x)
             - self.d_th
@@ -309,22 +279,6 @@ class Heston_exp(Equation):
             + (z * z) / (2 * self.gamma)
             - (self.gamma * (1 - self.gamma) / 2) * (pi_sigma - optimal_pi_sigma) ** 2
         )
-
-        # if ub is None and lb is None:
-        #     f = self.r_tilde(x) - self.d_th + self.coef_exp * tf.math.exp(-self.psi * y / self.theta) + \
-        #         (z * z) / (2 * self.gamma)
-        #     # print('NotBound', optimal_pi_sigma[0].numpy(), lb, ub)
-        # elif ub is not None:
-        #     pi_sigma = tf.minimum(optimal_pi_sigma, ub * sigma)
-        #     f = self.r_tilde(x) - self.d_th + self.coef_exp * tf.math.exp(-self.psi * y / self.theta) + \
-        #         (z * z) / (2 * self.gamma) + ((1 - self.gamma) / self.gamma) * theta * z - \
-        #         (self.gamma * (1 - self.gamma) / 2) * (pi_sigma - optimal_pi_sigma)**2
-        # else:
-        #     pi_sigma = tf.maximum(optimal_pi_sigma, lb * sigma)
-        #     f = self.r_tilde(x) - self.d_th + self.coef_exp * tf.math.exp(-self.psi * y / self.theta) + \
-        #         (z * z) / (2 * self.gamma) + ((1 - self.gamma) / self.gamma) * theta * z - \
-        #         (self.gamma * (1 - self.gamma) / 2) * (pi_sigma - optimal_pi_sigma)**2
-        #     # print('bound', optimal_pi_sigma[0].numpy(), pi_sigma[0].numpy(), lb, ub)
         return f
 
     def r_tilde(self, x):
@@ -374,10 +328,7 @@ class Heston_exp(Equation):
 
 class Heston_poly(Heston_exp):
     def __init__(self, config):
-        # use 'super()' to refer to the base class 'Equation'
-        # here is to use the base class __init__method to initiate the attributes
         super(Heston_poly, self).__init__(config)
-        # self.x_init = np.ones(self.dim) * 0.15 ** 2
         self.x_init = config.x_init
         self.delta = 0.05
         self.r = 0.05
@@ -395,16 +346,12 @@ class Heston_poly(Heston_exp):
         self.dimx = self.dim
 
     def f_u(self, x, y, z):
-        # K=1e6
-        # y=tf.minimum(y,K)
-        # y = tf.maximum(y, 1/K)
         if self.q_tilde == 0:
             f = -self.r_tilde(x) * y + self.delta ** self.psi
         else:
             f = -self.r_tilde(x) * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(
                 tf.maximum(y, 1 / MAX), self.q_tilde
             )
-            # - ((1 - self.gamma) * self.k * self.rho**2 / self.gamma + self.k - 1) * z**2 / (2 * y)
         return f
 
     def r_tilde(self, x):
@@ -437,21 +384,12 @@ class NewEcon_np(Equation):
 
     def sample(self, num_sample, seed):
 
-        # N=self.num_time_interval
-        # M=num_sample
-        # eng=matlab.engine.start_matlab()
-        # eng.rng(2018)
-        # dw_sample = eng.randn(M/2,3,N)
-        # dw_sample = np.asarray(dw_sample) * self.sqrt_delta_t
-        # eng.quit
         np.random.seed(seed)
         dw_sample = np.asarray(
             normal.rvs(size=[int(num_sample / 2), self.dim, self.num_time_interval]) * self.sqrt_delta_t
         )
         dw_sample = np.concatenate((dw_sample, -dw_sample), axis=0)
         dw_sample = np.reshape(dw_sample, (num_sample, self.dim, self.num_time_interval))
-        # dw_sample is M x 3 x N
-        # x_sample is M x 5 x (N+1)
         x_sample = np.tile(self.x_init, [num_sample, self.num_time_interval + 1, 1]).transpose(0, 2, 1)
         sigmax = np.empty([num_sample, self.dimx, self.dim, self.num_time_interval])  # M x 5 x 3 x N
         for i in range(self.num_time_interval):
@@ -545,11 +483,6 @@ class NewEcon_np(Equation):
                 )
         return sigma
 
-    # def f_tf(self, t, x, y, z):
-    #     f = -self.r_tilde_tf(x) * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(
-    #         tf.maximum(y, 0), self.q_tilde
-    #     )
-    #     return f
     def f(self, x, y, z, lb, ub):
         f = (
             self.r_tilde_exp(x)
@@ -567,51 +500,6 @@ class NewEcon_np(Equation):
         r = x[:, 0, :]
         mpr = x[:, 2:5, :]
         return (1 - self.gamma) * (r + 0.5 * np.sum(np.square(mpr), 1, keepdims=False) / self.gamma)
-
-    # def f(self, t, x, y, z):
-    #     """
-    #     conjecture: y^k
-    #     :param x: M x 5
-    #     :param y: M x 1
-    #     :param z: M x 3
-    #     return : M x 1
-    #     """
-    #     f = -self.r_tilde(x) * y + (self.delta ** self.psi / (1 - self.q_tilde)) * np.power(
-    #         np.maximum(y, 1e-10), self.q_tilde
-    #     )
-    #     # -(1-self.gamma)*self.k*self.rho**2/self.gamma+self.k-1)*z**2/(2*y)
-    #     return f
-
-    # def r_tilde(self, x):
-    #     """
-    #     conjecture: y^k
-    #     :param x: M x 5
-    #     :return: M x 1
-    #     """
-    #     r = x[:, 0]
-    #     mpr = x[:, 2:5]
-    #     return -(1 / self.k) * (
-    #         r * (1 - self.gamma)
-    #         + 0.5 * ((1 - self.gamma) / self.gamma) * np.sum(np.power(mpr, 2), axis=1)
-    #         - self.delta * self.theta
-    #     )
-
-    # def r_tilde_tf(self, x):
-    #     """
-    #     :param x: M x 5 x 1
-    #     :return: M x 1 x 1
-    #     """
-    #     r = tf.expand_dims(x[:, 0], 1)
-    #     mpr = x[:, 2:5]
-    #     return -(1 / self.k) * (
-    #         r * (1 - self.gamma)
-    #         + 0.5 * ((1 - self.gamma) / self.gamma) * tf.reduce_sum(tf.square(mpr), 1, keepdims=True)
-    #         - self.delta * self.theta
-    #     )
-
-    # def g_tf(self, t, x):
-
-    #     return tf.ones(shape=tf.stack([tf.shape(x)[0], 1]), dtype=TF_DTYPE)
 
     def g(self, t, x):
         return 0.0
@@ -683,41 +571,6 @@ class NewEcon_exp(Equation):
         self.vol_T = tf.transpose(self.vol)
         self.vol_T_inv = tf.constant(vol_T_inv, dtype=TF_DTYPE)
         self.w = tf.reduce_sum(self.vol_T_inv, 0)  # [3,]
-        # self.pi_model = self.get_pi_model()
-        # self.var_inv = tf.constant(var_inv, dtype=TF_DTYPE)
-        # x = cp.Variable(3)
-        # A = cp.Parameter((m, n))
-        # b = cp.Parameter(3)
-        # constraints = [x >= 0, cp.sum(x) <= 0.2]
-        # objective = cp.Minimize(cp.sum_squares(vol_T @ x - b))
-        # problem = cp.Problem(objective, constraints)
-        # self.cvxpylayer = CvxpyLayer(problem, parameters=[b], variables=[x])
-
-    # # def get_pi_model(self):
-    #     pkl_file = open("./logs/model/dataset.pkl", "rb")
-    #     dataset = pickle.load(pkl_file)
-    #     pkl_file.close()
-    #     input_data = dataset[:, 3:]
-    #     output_data = dataset[:, :3]
-    #     X_train, X_test, y_train, y_test = train_test_split(
-    #         input_data, output_data, test_size=0.2, random_state=42
-    #     )
-
-    #     new_model = LambdaSolver(activation_fn="relu")
-    #     # for layer in new_model.layers:
-    #     #     layer.trainable = False
-    #     new_model.trainable = False
-
-    #     new_model.compile(
-    #         optimizer=tf.keras.optimizers.Adam(1e-3), loss="mean_squared_error"
-    #     )
-    #     # This initializes the variables used by the optimizers,
-    #     # as well as any stateful metric variables
-    #     # optimizer = tf.keras.optimizers.Adam(1e-3)
-    #     new_model.train_on_batch(X_train[:1], y_train[:1])
-    #     # Load the state of the old model
-    #     new_model.load_weights("./logs/model/lambda_model")
-    #     return new_model
 
     def pi_d2(self, b, lb, ub):
         """
@@ -726,11 +579,6 @@ class NewEcon_exp(Equation):
             pi: [M,3]
             d2: [M,1]
         """
-        # a = tf.reduce_sum(tf.squeeze(tf.matmul(self.vol_T_inv, tf.expand_dims(b, axis=2))), axis=1, keepdims=True) - ub  # [M,1]
-        # batches = tf.shape(b)[0]
-        # c = tf.broadcast_to(tf.reduce_sum(self.var_inv, axis=1), [batches, self.dim])  # [M, 3]
-        # w_T_W = tf.reduce_sum(c, axis=1, keepdims=True)  # [M,1]
-        # optimal_pi = tf.squeeze(tf.matmul(self.vol_T_inv, tf.expand_dims(b, axis=2)))
         w = self.w
         k = (tf.reduce_sum(w * b, 1, keepdims=True) - ub) / tf.reduce_sum(w ** 2)  # [M,1]
 
@@ -748,40 +596,6 @@ class NewEcon_exp(Equation):
                 keepdims=True,
             )  # [M,1]
 
-            # # First try to project pi onto the face
-            # x_face = tf.maximum(lb, b)  # [M, 3]
-            # # right_ub [M, 1] 1.0 means the projection on the surface is to the right of ub plane
-            # right_ub = tf.cast(tf.reduce_sum(w*x_face, axis=1, keepdims=True) > ub, dtype=TF_DTYPE)
-            # left_ub = 1-right_ub
-
-            # # Second option is to project pi onto the triangle
-            # # First project pi onto the plane
-            # x_plane = b - k * w
-            # # Project x_plane onto the closest edge
-            # a1 = tf.cast(x_plane < lb, dtype=TF_DTYPE)
-            # # f1=0 means two of the coordinates of x_plane is negative, in which case the closest point is the vertex
-            # f1 = tf.cast(tf.reduce_sum(a1, 1, keepdims=True) == 1, dtype=TF_DTYPE)
-            # w1, w23 = a1 * w, (1 - a1) * w
-            # d1 = -a1 * (x_plane - lb) + (w23 / tf.norm(w23, axis=1, keepdims=True)**2) * tf.reduce_sum(w1 * (x_plane - lb), 1, keepdims=True)
-            # x_edge = x_plane + d1
-            # # Check if x_edge lies between the two ends of the edge, if not, further move it to the vertex
-            # a2 = tf.cast(x_edge < lb, dtype=TF_DTYPE)
-            # w2, w3 = a2 * w, (1 - a1 - a2) * w
-            # d2 = -a2 * (x_edge - lb) + (w3 / tf.norm(w3, axis=1, keepdims=True)**2) * tf.reduce_sum(w2 * (x_edge - lb), 1, keepdims=True)
-            # x_edge += d2
-
-            # x_vertex = (1 - a1) * ub / (tf.reduce_sum((1 - a1) * w, 1, keepdims=True))
-
-            # x_triangle = (1 - f1) * x_vertex + f1 * x_edge
-
-            # x_new = x_face * left_ub + x_triangle * right_ub
-            # pi = tf.squeeze(tf.matmul(self.vol_T_inv, tf.expand_dims(x_new, axis=2)))
-            # d2 = tf.reduce_sum((x_new - b)**2, axis=1, keepdims=True)
-            # pi, = self.cvxpylayer(b)
-            # pi = tf.cast(pi, dtype=TF_DTYPE)
-            # # pdb.set_trace()
-            # d2 = tf.reduce_sum(tf.squeeze(self.vol_T @ tf.expand_dims(pi, 2)) - b, axis=1, keepdims=True)  # [M,1]
-
         return pi, d2
 
     @tf.function()
@@ -794,8 +608,6 @@ class NewEcon_exp(Equation):
 
         mu_x = self.mu_x(x)
         sigma_x = self.sigma_x(x)  # [M,5,3]
-        # tf.print('x: ', tf.reduce_mean(x,axis=0), 'alpha_x: ', tf.reduce_mean(self.alpha(x),axis=0),
-        #          'sigma_x: ', tf.reduce_mean(self.sigma_x(x)[:,:,0], axis=0))
         dw = tf.expand_dims(dw, 2)
         x_new = x + self.delta_t * mu_x + tf.squeeze(tf.matmul(sigma_x, dw))
         x_new = tf.minimum(x_new, MAX)
@@ -932,7 +744,6 @@ class NewEcon_exp(Equation):
     @tf.function()
     def next_y(self, t, x, y, z, dw, lb, ub, zdx=True):
         if zdx:
-            # sigma_x_w = tf.squeeze(tf.matmul(self.sigma_x(x), tf.expand_dims(dw, 2)))
             z = tf.squeeze(tf.matmul(tf.transpose(self.sigma_x(x), [0, 2, 1]), tf.expand_dims(z, 2)))  # [M,3]
         y = tf.minimum(y, 30.0)
         y = tf.maximum(y, -30.0)
@@ -947,18 +758,12 @@ class NewEcon_exp(Equation):
         else:
             ub = tf.cast(ub, dtype=TF_DTYPE)
             pi, d2 = self.pi_d2(optimal_pi_sigma, lb, ub)
-            # d2 = tf.minimum(d2, 100)
-            # pdb.set_trace()
             f = self.f_tf(t, x, y, z) - (self.gamma * (1 - self.gamma) / 2) * d2
             y_new = y - self.delta_t * f + tf.reduce_sum(tf.multiply(z, dw), 1, keepdims=True)  # [M,1]
 
         return y_new, pi
 
     def f_tf(self, t, x, y, z):
-        # y = tf.minimum(y, 50.0)
-        # y = tf.maximum(y, -50.0)
-        # z = tf.minimum(z, 10.0)
-        # z = tf.maximum(z, -10.0)
         f = (
             self.r_tilde_tf(x)
             - self.d_th
@@ -1140,8 +945,6 @@ class LargeScale_poly(Equation):
 
     def mu_x(self, x):
         mpr = x[:, self.dim :]
-        # mpr_stack = tf.concat([mpr, mpr], 1)
-        # sigma_x = self.sigma_x(x)
         mu_x = self.alpha_x(x) + ((1 - self.gamma) / self.gamma) * (tf.concat([mpr, mpr], 1) * self.sigma_x(x))
         return mu_x
 
@@ -1163,8 +966,6 @@ class LargeScale_poly(Equation):
     @tf.function()
     def next_y(self, t, x, y, z, dw, lb, ub, zdx=True):
         if zdx:
-            # temp = z * self.sigma_x(x)
-            # z = temp[:, : self.dim] + temp[:, self.dim :]
             z = self.z_T_matmul_sigma_x(z, self.sigma_x(x))
         y = tf.minimum(y, 30.0)
         y = tf.maximum(y, -30.0)
@@ -1173,15 +974,12 @@ class LargeScale_poly(Equation):
         mpr = x[:, self.dim :]
         optimal_pi_sigma = (mpr + z) / self.gamma
         if lb is None and ub is None:
-            # pi = tf.squeeze(tf.matmul(self.vol_T_inv, tf.expand_dims(optimal_pi_sigma, axis=2)))
             pi = self.multiply_with_vol_T(optimal_pi_sigma)
             y_new = y - self.delta_t * self.f_tf(t, x, y, z) + tf.reduce_sum(tf.multiply(z, dw), 1, keepdims=True)
             # [M,1]
         else:
             ub = tf.cast(ub, dtype=TF_DTYPE)
             pi, d2 = self.pi_d2(optimal_pi_sigma, lb, ub)
-            # d2 = tf.minimum(d2, 100)
-            # pdb.set_trace()
             f = self.f_tf(t, x, y, z) - (self.gamma * (1 - self.gamma) / 2) * d2
             y_new = y - self.delta_t * f + tf.reduce_sum(tf.multiply(z, dw), 1, keepdims=True)  # [M,1]
 
@@ -1211,10 +1009,9 @@ class LargeScale_poly(Equation):
         return tf.ones(shape=[tf.shape(x)[0], 1], dtype=TF_DTYPE)
 
 
-#%%
 if __name__ == "__main__":
     from config import get_config
-    from equation_large import get_equation
+    from equation import get_equation
     import tensorflow as tf
     import numpy as np
 
@@ -1232,10 +1029,3 @@ if __name__ == "__main__":
     z = tf.cast(tf.broadcast_to([1.0] * 20, [2, 20]), dtype=tf.float32)
     y_new, _ = equation.next_y(0, x, 3.0, z, dw, None, None, zdx=True)
     print(y_new)
-
-# %%
-# mpr = x[:, equation.dim :]
-# sigma_x = equation.sigma_x(x)
-# tf.concat([mpr, mpr], 1) * sigma_x
-# equation.next_x(x, sample_dw)
-# %%
