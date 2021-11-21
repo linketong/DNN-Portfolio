@@ -1,19 +1,16 @@
 import pdb
 import sys
 import time
-
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import Model, regularizers
+from tensorflow.keras import Model
 
 TF_DTYPE = tf.float32
-EPSILON = 5e-6
-LAMBDA = 0
 
 
-class Merged(Model):
+class dBSDE(Model):
     def __init__(self, equation, y0, zdx=True, separate_z0=True, lb=None, ub=None):
-        super(Merged, self).__init__()
+        super(dBSDE, self).__init__()
         self.bsde = equation
         self.dimw = equation.dim
         self.dimx = equation.dimx
@@ -32,7 +29,6 @@ class Merged(Model):
         self.y0 = tf.Variable(tf.cast(y0, dtype=TF_DTYPE), name="y0")
         self.separate_z0 = separate_z0
         self.dimz0 = self.dimz
-        # if separate_z0:
         self.z0 = tf.Variable(tf.constant(0, dtype=TF_DTYPE, shape=[1, self.dimz0]), name="z0")
         self.train_loss = tf.keras.metrics.Mean(name="train_loss")
         self.test_loss = tf.keras.metrics.Mean(name="test_loss")
@@ -42,40 +38,18 @@ class Merged(Model):
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.lr)
 
         n_nodes = self.dimz + 20
-        kernel_reg = 0
-        bias_reg = 0
         n_inputs = self.dimx + 2  # [x,y,t]
+        dense_layers = [
+            tf.keras.layers.Dense(n_nodes, activation=tf.nn.elu) for _ in range(4 + int(np.log(self.dimz)))
+        ]
         self.nn_z = tf.keras.Sequential(
-            [
-                tf.keras.layers.BatchNormalization(input_shape=(n_inputs,)),
-                tf.keras.layers.Dense(
-                    n_nodes,
-                    activation=tf.nn.elu,
-                    # kernel_initializer='zero', bias_initializer='zero',
-                    kernel_regularizer=regularizers.l1(kernel_reg),
-                    bias_regularizer=regularizers.l1(bias_reg),
-                ),  # input shape required
-                tf.keras.layers.Dropout(0.2),
-                tf.keras.layers.Dense(
-                    n_nodes,
-                    activation=tf.nn.elu,
-                    # kernel_initializer='zero', bias_initializer='zero',
-                    kernel_regularizer=regularizers.l1(kernel_reg),
-                    bias_regularizer=regularizers.l1(bias_reg),
-                ),
-                tf.keras.layers.Dropout(0.2),
-                tf.keras.layers.Dense(
-                    self.dimz,
-                    # kernel_initializer='zero', bias_initializer='zero',
-                    kernel_regularizer=regularizers.l1(kernel_reg),
-                    bias_regularizer=regularizers.l1(bias_reg),
-                ),
-            ]
+            [tf.keras.layers.BatchNormalization(input_shape=(n_inputs,))]
+            + dense_layers
+            + [tf.keras.layers.Dense(self.dimz)]
         )
+        self.hist = {}
 
-        self.hist = {"x": [], "y": [], "z": [], "t": []}
-
-    def call(self, inputs, test=False, record=False, record_tb=False, log_dir="./logs/"):
+    def call(self, inputs, test=False, record=False, log_dir="./logs/"):
         """
         :param inputs: [batch_size, dimx]
         :param record: record history of x, y, z. True for prediction
@@ -85,7 +59,6 @@ class Merged(Model):
         """
 
         """Initialization"""
-
         dw_sample = tf.reshape(tf.cast(inputs, dtype=TF_DTYPE), [-1, self.dimw, self.num_time_interval])
         batch_size = tf.shape(inputs)[0]
         x = tf.broadcast_to(self.x0, [batch_size, self.dimx])
@@ -94,7 +67,6 @@ class Merged(Model):
             z0 = tf.broadcast_to(self.z0, [batch_size, self.dimz0])
         else:
             features = tf.concat([x, tf.zeros([batch_size, 1], dtype=TF_DTYPE), y], axis=1)
-            # features = tf.concat([x, tf.zeros([batch_size, 1], dtype=TF_DTYPE)], axis=1)
             z0 = self.nn_z(features) / self.dimz
             self.z0 = tf.reshape(z0[0, :], [1, tf.shape(z0)[1]])
 
@@ -107,8 +79,6 @@ class Merged(Model):
             self.hist["z"].append(tf.reduce_mean(z0, axis=0, keepdims=False))
             self.hist["t"].append(current_time[0][0])
         y, pi = self.bsde.next_y(current_time, x, y, z0, dw, self.lb, self.ub, zdx=self.zdx)
-        if record_tb:
-            writer = tf.summary.create_file_writer(log_dir + "/tensorboard")
         if test:
             self.hist["y"].append(tf.reduce_mean(y, keepdims=False))  # y[1]
             self.hist["pi"].append(tf.reduce_mean(pi, axis=0, keepdims=False))  # pi[0]
@@ -119,11 +89,6 @@ class Merged(Model):
             x = self.bsde.next_x(x, dw)  # x[1]
             features = tf.concat([x, time, y], axis=1)
             z = self.nn_z(features) / self.dimz  # z[1]
-
-            if record_tb:
-                with writer.as_default():
-                    tf.summary.scalar("y", data=tf.squeeze(tf.reduce_mean(y, axis=0)), step=t)
-
             dw = dw_sample[:, :, t]  # [M, dimw] dw[1] adapted to t=2
             y, pi = self.bsde.next_y(
                 time, x, y, z, dw, self.lb, self.ub, self.zdx
@@ -135,30 +100,25 @@ class Merged(Model):
                 self.hist["pi"].append(tf.reduce_mean(pi, axis=0, keepdims=False))  # pi[1]...pi[N-1]
                 self.hist["t"].append(time[0][0])  # t[1]...t[N-1]
         x = self.bsde.next_x(x, dw)
-        if record_tb:
-            writer.flush()
         return y, x, z
 
-    @tf.function(experimental_compile=False)
+    @tf.function()
     def train_step(self, train_ds):
         with tf.GradientTape() as tape:
             pred_value, _, _ = self.call(train_ds, test=False)
             true_value = self.bsde.g_tf(0, pred_value)
-            loss = tf.keras.losses.mean_squared_error(
-                true_value, pred_value
-            )  # + LAMBDA * tf.keras.losses.mean_squared_error(self.z0, tf.zeros(shape=[1, tf.shape(self.z0)[1]]))
+            loss = tf.keras.losses.mean_squared_error(true_value, pred_value)
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         self.train_loss.update_state(loss)
 
-    # @tf.function
     def test_step(self, test_ds):
         pred_value, _, _ = self.call(test_ds, test=True)
+        # true_value is given by the g_tf function in bsde equations, i.e. the terminal value.
         true_value = self.bsde.g_tf(0, pred_value)
         loss = tf.keras.losses.mean_squared_error(true_value, pred_value)
         self.test_loss.update_state(loss)
 
-    # @tf.function
     def custom_fit(self, train_ds, test_ds, epochs):
         start_time = time.time()
         hist_loss = []
@@ -191,7 +151,7 @@ class Merged(Model):
             test_loss = self.test_loss.result()
             hist_loss.append(test_loss)
 
-            # Output result
+            # Reshape the z0
             if self.zdx and tf.shape(self.z0)[1] == self.dimx:
                 sigma_x = self.bsde.sigma_x(tf.expand_dims(self.x0, 0))
                 # z0 = tf.squeeze(tf.matmul(tf.expand_dims(self.z0, 0), sigma_x))
@@ -201,6 +161,7 @@ class Merged(Model):
                     z0 = tf.squeeze(tf.matmul(tf.expand_dims(self.z0, 0), sigma_x))
             else:
                 z0 = tf.squeeze(self.z0)
+            # Print out test result at each epoch
             tf.print(
                 "Epoch:",
                 epoch + 1,
@@ -216,6 +177,7 @@ class Merged(Model):
                 self.lr,
                 output_stream=sys.stdout,
             )
+            # Document the training process in history
             history["epoch"].append(epoch + 1)
             history["elapsed_time"].append(elapsed_time)
             history["y0"].append(self.y0.numpy())
