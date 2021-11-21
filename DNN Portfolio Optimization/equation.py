@@ -10,8 +10,6 @@ from scipy.stats import multivariate_normal as normal
 from sklearn.model_selection import train_test_split
 
 TF_DTYPE = tf.float32
-MAX = float("Inf")
-MIN = 0.0
 
 
 class Equation(object):
@@ -21,25 +19,27 @@ class Equation(object):
         self.dim = config.dim
         self.total_time = config.total_time
         self.num_time_interval = config.num_time_interval
-        # self.steps_in_year = 40
-        # self.num_time_interval = self.total_time * self.steps_in_year + 1
         self.delta_t = (self.total_time + 0.0) / self.num_time_interval
         self.sqrt_delta_t = np.sqrt(self.delta_t)
-        # self.x0 = config.x_init
 
-    def sample(self, num_sample):
-        """Sample forward SDE."""
+    def next_x(self, num_sample):
+        """simulate state variables"""
+        raise NotImplementedError
+
+    def next_y(self, num_sample):
+        """simulate value function"""
         raise NotImplementedError
 
     def z_T_matmul_sigma_x(self, z, sigma_x):
+        """Calulate the matrix multiplication between Z and beta(x)"""
         return tf.squeeze(tf.matmul(tf.expand_dims(z, 0), sigma_x))
 
     def f_tf(self, t, x, y, z):
-        """Generator function in the PDE."""
+        """Generator function in the BSDE."""
         raise NotImplementedError
 
     def g_tf(self, t, x):
-        """Terminal condition of the PDE."""
+        """Terminal condition of the BSDE."""
         raise NotImplementedError
 
 
@@ -75,7 +75,7 @@ class Heston(Equation):
         sigmax = self.sigma_x(x)
         dw = tf.expand_dims(dw, axis=2)
         x_new = x + new_kappa * (new_theta - x) * self.delta_t + tf.squeeze(tf.matmul(sigmax, dw), axis=2)
-        x_new = tf.maximum(x_new, MIN)
+        x_new = tf.maximum(x_new, 0)
         return x_new
 
     def sigma_x(self, x):
@@ -99,9 +99,6 @@ class Heston(Equation):
             + 0.5 * self.mu_bar ** 2 * x * (1 - self.gamma) / self.gamma
             - self.delta * self.theta
         )
-        # if self.q_tilde == 0:
-        # f = -r_tilde * y + self.delta ** self.psi
-        # else:
         f = -r_tilde * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(tf.maximum(y, 0), self.q_tilde)
         return f
 
@@ -133,7 +130,6 @@ class Heston(Equation):
             - 0.5 * ((kappa_hat + a) * s - (kappa_hat - a) * t)
         ) / (kappa_hat ** 2 - a ** 2) + (((1 - gamma) * r - delta * theta) / k) * (s - t)
         b_exact = 2 * b * (np.exp(a * (s - t)) - 1) / (np.exp(a * (s - t)) * (kappa_hat + a) - kappa_hat + a)
-        # integrand = np.exp(a_exact - b_exact * y)
         return a_exact, b_exact
 
     def h_exact(self, x, t, T):
@@ -225,8 +221,9 @@ class LargeScale(Equation):
 
     def multiply_with_vol_T(self, x):
         """
-        x: [M,d]
-        output : [M,d]
+        Multiply vector x with the volatility matrix of stock price
+        parameter x: of dimension [M,d]
+        output : of dimension [M,d]
         """
         vol_T_0_1 = np.asarray(
             [
@@ -249,10 +246,10 @@ class LargeScale(Equation):
     def sigma_x(self, x):
         """
         x:  x[0]   r
-            x[1:9] p
-            x[10]  theta1
-            x[11:19] theta
-        output: M x 20
+            x[1:d-1] p
+            x[d]  theta1
+            x[d+1:2d-1] theta
+        output: beta(x) the volatility of the state variable of dimension [M x 2d]
         """
         r = tf.expand_dims(x[:, 0], 1)  # [M,1]
         p = x[:, 1 : self.dim]  # [M,d-1]
@@ -270,10 +267,10 @@ class LargeScale(Equation):
     def alpha_x(self, x):
         """
         x:  x[0]   r
-            x[1:9] p
-            x[10]  theta1
-            x[11:19] theta
-        output: M x 20
+            x[1:d-1] p
+            x[d]  theta1
+            x[d+1:2d-1] theta
+        output: the drift of the state variable M x 2d
         """
         r = tf.expand_dims(x[:, 0], 1)  # [M,1]
         p = x[:, 1 : self.dim]  # [M,d-1]
@@ -292,6 +289,7 @@ class LargeScale(Equation):
         return alpha_x
 
     def mu_x(self, x):
+        """The adjusted drift of state varialbe in the equivalent measure"""
         mpr = x[:, self.dim :]
         # mpr_stack = tf.concat([mpr, mpr], 1)
         # sigma_x = self.sigma_x(x)
@@ -300,17 +298,10 @@ class LargeScale(Equation):
 
     @tf.function()
     def next_x(self, x, dw):
-        """
-        :param x:[M,20]
-        :param dw: [M,10]
-        :return: [M,20]
-        """
-
         mu_x = self.mu_x(x)
         sigma_x = self.sigma_x(x)  # [M,5,3]
         x_new = x + self.delta_t * mu_x + (tf.concat([dw, dw], 1) * sigma_x)
-        x_new = tf.minimum(x_new, MAX)
-        x_new = tf.maximum(x_new, MIN)
+        x_new = tf.maximum(x_new, 0)
         return x_new
 
     @tf.function()
@@ -331,24 +322,24 @@ class LargeScale(Equation):
         return y_new, pi
 
     def f_tf(self, t, x, y, z):
-        f = -self.r_tilde_tf(x) * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(
-            tf.maximum(y, 0), self.q_tilde
-        )
-        return f
-
-    def r_tilde_tf(self, x):
-        """
-        :param x: M x 5 x 1
-        :return: M x 1 x 1
-        """
         r = tf.expand_dims(x[:, 0], 1)
         mpr = x[:, 2:5]
-        return -(1 / self.k) * (
+        r_tilde = -(1 / self.k) * (
             r * (1 - self.gamma)
             + 0.5 * ((1 - self.gamma) / self.gamma) * tf.reduce_sum(tf.square(mpr), 1, keepdims=True)
             - self.delta * self.theta
         )
+        f = -r_tilde * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(tf.maximum(y, 0), self.q_tilde)
+        return f
+
+    # def r_tilde_tf(self, x):
+    #     r = tf.expand_dims(x[:, 0], 1)
+    #     mpr = x[:, 2:5]
+    #     return -(1 / self.k) * (
+    #         r * (1 - self.gamma)
+    #         + 0.5 * ((1 - self.gamma) / self.gamma) * tf.reduce_sum(tf.square(mpr), 1, keepdims=True)
+    #         - self.delta * self.theta
+    #     )
 
     def g_tf(self, t, x):
-
         return tf.ones(shape=[tf.shape(x)[0], 1], dtype=TF_DTYPE)
