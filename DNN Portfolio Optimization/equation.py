@@ -332,14 +332,5 @@ class LargeScale(Equation):
         f = -r_tilde * y + (self.delta ** self.psi / (1 - self.q_tilde)) * tf.pow(tf.maximum(y, 0), self.q_tilde)
         return f
 
-    # def r_tilde_tf(self, x):
-    #     r = tf.expand_dims(x[:, 0], 1)
-    #     mpr = x[:, 2:5]
-    #     return -(1 / self.k) * (
-    #         r * (1 - self.gamma)
-    #         + 0.5 * ((1 - self.gamma) / self.gamma) * tf.reduce_sum(tf.square(mpr), 1, keepdims=True)
-    #         - self.delta * self.theta
-    #     )
-
     def g_tf(self, t, x):
         return tf.ones(shape=[tf.shape(x)[0], 1], dtype=TF_DTYPE)
